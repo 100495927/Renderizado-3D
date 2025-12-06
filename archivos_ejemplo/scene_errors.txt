@@ -1,0 +1,4 @@
+matte: mat1 0 0.8
+sphere: 0 0 0 -1.0 unknown_material
+unknown: 1 2 3
+metal: mat1 0.5 0.5 0.5 1.0

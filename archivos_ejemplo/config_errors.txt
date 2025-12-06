@@ -1,0 +1,4 @@
+imagewidth: -100
+gamma: 2.2 extra data
+unknown_key: 123
+cameraposition: 1 2
