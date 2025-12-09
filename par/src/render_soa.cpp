@@ -9,6 +9,7 @@
 #include "../include/soa_ray.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <optional>
@@ -28,6 +29,34 @@
 namespace soa {
 
   namespace {
+
+    // ==================== GENERADORES THREAD-LOCAL ====================
+    // Variable globla thread-local para RNG de materiales
+    tbb::enumerable_thread_specific<std::mt19937_64> g_material_rng_per_thread{};
+
+    void initialize_material_thread_local_rngs(std::uint64_t base_seed) {
+      // Determinar el número de hilos
+      size_t num_threads = tbb::this_task_arena::max_concurrency();
+      if (num_threads == 0) {
+        num_threads = std::thread::hardware_concurrency();
+      }
+      if (num_threads == 0) {
+        num_threads = 1;
+      }
+
+      // Generar semillas únicas para cada hilo
+      std::vector<std::uint64_t> seeds_material(num_threads);
+      std::mt19937_64 seed_gen_material{base_seed + 12'345ULL};
+      std::ranges::generate(seeds_material, seed_gen_material);
+
+      // Indicar generadores locales a cada hilo
+      g_material_rng_per_thread = tbb::enumerable_thread_specific<std::mt19937_64>{
+        [seeds_material_copy = seeds_material]() mutable {
+          static std::atomic<std::size_t> thread_counter{0};
+          auto thread_id = thread_counter.fetch_add(1, std::memory_order_relaxed);
+          return std::mt19937_64{seeds_material_copy[thread_id % seeds_material_copy.size()]};
+        }};
+    }
 
     // ==================== ESTRUCTURAS ====================
 
@@ -269,12 +298,12 @@ namespace soa {
       if (hit.material.roughness > 1e-8) {
         // Añadir perturbación aleatoria basada en roughness
         // Usar el generador local al hilo desde el contexto
-        static thread_local std::mt19937 gen(std::random_device{}());
+        auto & local_rng = g_material_rng_per_thread.local();
         std::uniform_real_distribution<> dis(-1.0, 1.0);
 
-        render::vector const perturbation{dis(gen) * hit.material.roughness,
-                                          dis(gen) * hit.material.roughness,
-                                          dis(gen) * hit.material.roughness};
+        render::vector const perturbation{dis(local_rng) * hit.material.roughness,
+                                          dis(local_rng) * hit.material.roughness,
+                                          dis(local_rng) * hit.material.roughness};
         reflected = reflected + perturbation;
         reflected = reflected / reflected.magnitude();
       }
@@ -290,12 +319,11 @@ namespace soa {
       double const EPSILON = 1e-4;
 
       // Usar thread_local para evitar carrera de datos
-      static thread_local std::mt19937 gen(std::random_device{}());
+      auto & local_rng = g_material_rng_per_thread.local();
       std::uniform_real_distribution<> dis(0.0, 1.0);
 
-      double const r1 = dis(gen);
-      double const r2 = dis(gen);
-
+      double const r1 = dis(local_rng);
+      double const r2 = dis(local_rng);
       // Generar ángulos
       double const theta = std::acos(std::sqrt(r1));
       double const phi   = 2.0 * M_PI * r2;
@@ -345,7 +373,7 @@ namespace soa {
 
   }  // namespace
 
-  // VERSIÓN PARALELIZADA CON TBB
+  // ============ VERSIÓN PARALELIZADA CON TBB ==============
   // Estructura para agrupar datos de configuración del render
   struct RenderParams {
     int w{};
@@ -362,7 +390,7 @@ namespace soa {
 
     // Función para procesar un bloque de píxeles
     void process_pixel_block(tbb::blocked_range2d<int> const & range, RenderParams const & params,
-                             tbb::enumerable_thread_specific<std::mt19937> & thread_rng) {
+                             tbb::enumerable_thread_specific<std::mt19937_64> & thread_rng) {
       auto & local_rng    = thread_rng.local();
       auto const & camera = *params.camera;
       auto const & cfg    = *params.cfg;
@@ -400,6 +428,9 @@ namespace soa {
   // Función principal render_scene
   void render_scene(ConfigParams const & cfg, SceneOutput const & scene, CameraSOA & camera,
                     SOAImage & image) {
+    // Inicializar generadores thread-local para materiales
+    initialize_material_thread_local_rngs(cfg.ray_rng_seed);
+
     RenderParams params;
     params.w         = image.width();
     params.h         = image.height();
@@ -419,11 +450,11 @@ namespace soa {
     std::mt19937_64 seed_gen(static_cast<std::uint64_t>(cfg.ray_rng_seed));
     std::ranges::generate(thread_seeds, seed_gen);
 
-    tbb::enumerable_thread_specific<std::mt19937> thread_rng([&thread_seeds]() {
+    tbb::enumerable_thread_specific<std::mt19937_64> thread_rng([&thread_seeds]() {
       static std::atomic<std::size_t> counter{0};
       auto thread_id           = counter.fetch_add(1, std::memory_order_relaxed);
       std::uint64_t seed_value = thread_seeds[thread_id % thread_seeds.size()];
-      return std::mt19937(static_cast<std::mt19937::result_type>(seed_value));
+      return std::mt19937_64(static_cast<std::mt19937_64::result_type>(seed_value));
     });
 
     tbb::parallel_for(
