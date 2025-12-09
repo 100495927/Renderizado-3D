@@ -8,14 +8,19 @@
 #include "../include/soa_image.hpp"
 #include "../include/soa_ray.hpp"
 
-/*#include <math.h>*/
-
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <optional>
 #include <random>
 #include <string>
+#include <tbb/blocked_range2d.h>
+#include <tbb/enumerable_thread_specific.h>
+#include <tbb/global_control.h>
+#include <tbb/parallel_for.h>
+#include <tbb/task_arena.h>
+#include <vector>
+
 #ifndef M_PI
  #define M_PI 3.14159265358979323846
 #endif
@@ -121,28 +126,24 @@ namespace soa {
     }
 
     MaterialInfo find_material(std::string const & name, SceneOutput const & scene) {
-      // Buscar en REFRACTIVE primero (es lo más específico)
       for (auto const & m : scene.refractive_materials.get()) {
         if (m.name == name) {
           return get_material_refractive(name, scene);
         }
       }
 
-      // Luego en METAL
       for (auto const & m : scene.metal_materials.get()) {
         if (m.name == name) {
           return get_material_metal(name, scene);
         }
       }
 
-      // Finalmente en MATTE
       for (auto const & m : scene.matte_materials.get()) {
         if (m.name == name) {
           return get_material_matte(name, scene);
         }
       }
 
-      // Default MATTE si no encuentra nada
       MaterialInfo def{};
       def.type = MaterialInfo::MATTE;
       def.r    = 0.5;
@@ -258,7 +259,6 @@ namespace soa {
       return color::Color{reflected.r * mat.r, reflected.g * mat.g, reflected.b * mat.b};
     }
 
-    // ERROR 1 SOLUCIONADO: Ahora solo 3 parámetros (ray, hit, context)
     color::Color process_metal(ray::Ray const & r, HitInfo const & hit,
                                RayTracingContext const & ctx) {
       double const EPSILON     = 1e-4;
@@ -268,7 +268,8 @@ namespace soa {
       // MEJORA: Aplicar roughness para difuminar el reflejo
       if (hit.material.roughness > 1e-8) {
         // Añadir perturbación aleatoria basada en roughness
-        static std::mt19937 gen(static_cast<std::mt19937::result_type>(ctx.cfg->material_rng_seed));
+        // Usar el generador local al hilo desde el contexto
+        static thread_local std::mt19937 gen(std::random_device{}());
         std::uniform_real_distribution<> dis(-1.0, 1.0);
 
         render::vector const perturbation{dis(gen) * hit.material.roughness,
@@ -288,6 +289,7 @@ namespace soa {
     color::Color process_matte(HitInfo const & hit, RayTracingContext const & ctx) {
       double const EPSILON = 1e-4;
 
+      // Usar thread_local para evitar carrera de datos
       static thread_local std::mt19937 gen(std::random_device{}());
       std::uniform_real_distribution<> dis(0.0, 1.0);
 
@@ -315,24 +317,16 @@ namespace soa {
       return apply_material_color(reflected, hit.material);
     }
 
-    // Función principal optimizada
     color::Color process_refractive(ray::Ray const & r, HitInfo const & hit,
                                     RayTracingContext const & ctx) {
-      // Ley de Snell: n1*sin(theta1) = n2*sin(theta2)
-
       double const n1 = 1.0;                      // Aire
       double const n2 = hit.material.refraction;  // Índice del material
 
-      // Calcular ángulo de incidencia
       double const dot_in     = render::dot(hit.normal, -r.direction);
       double const sin_theta1 = std::sqrt(1.0 - dot_in * dot_in);
-
-      // Calcular ángulo de refracción
       double const sin_theta2 = (n1 / n2) * sin_theta1;
 
-      // Reflexión interna total
       if (sin_theta2 > 1.0) {
-        // Reflejar en lugar de refractar
         double const dot               = render::dot(r.direction, hit.normal);
         render::vector const reflected = r.direction - hit.normal * (2.0 * dot);
         ray::Ray const bounce_ray{hit.point, reflected};
@@ -340,7 +334,6 @@ namespace soa {
         return trace_ray(bounce_ray, new_ctx);
       }
 
-      // Refractar
       double const cos_theta2 = std::sqrt(1.0 - sin_theta2 * sin_theta2);
       render::vector const refracted =
           (r.direction * (n1 / n2)) + hit.normal * ((n1 / n2) * dot_in - cos_theta2);
@@ -352,39 +345,93 @@ namespace soa {
 
   }  // namespace
 
-  // ERROR 2 SOLUCIONADO: camera ahora es non-const (&) para poder llamar generate_primary_rays
-  void render_scene(ConfigParams const & cfg, SceneOutput const & scene, CameraSOA & camera,
-                    SOAImage & image) {
-    int const w         = image.width();
-    int const h         = image.height();
-    int const spp       = std::max(1, cfg.samples_per_pixel);
-    int const max_depth = std::max(1, cfg.max_depth);
-    // Prepare camera per-frame parameters; generate rays on the fly to avoid huge allocations
-    camera.begin_frame(static_cast<std::size_t>(w), static_cast<std::size_t>(h));
-    std::mt19937 rng(static_cast<std::mt19937::result_type>(cfg.ray_rng_seed));
+  // VERSIÓN PARALELIZADA CON TBB
+  // Estructura para agrupar datos de configuración del render
+  struct RenderParams {
+    int w{};
+    int h{};
+    int spp{};
+    int max_depth{};
+    ConfigParams const * cfg{nullptr};
+    SceneOutput const * scene{nullptr};
+    CameraSOA * camera{nullptr};
+    SOAImage * image{nullptr};
+  };
 
-    for (int j = 0; j < h; ++j) {
-      for (int i = 0; i < w; ++i) {
-        color::Color accum{0.0, 0.0, 0.0};
-        // Accumulate monte-carlo samples for this pixel
+  namespace {  // Namespace anónimo para funciones internas
 
-        for (int s = 0; s < spp; ++s) {
-          auto rs = camera.make_ray(static_cast<std::size_t>(i), static_cast<std::size_t>(j), rng);
-          ray::Ray const r{
-            render::vector{rs.ox, rs.oy, rs.oz},
-            render::vector{rs.dx, rs.dy, rs.dz}
-          };
-          int const safe_depth = max_depth;
-          RayTracingContext const ctx{safe_depth, &cfg, &scene, r.direction};
-          color::Color const c = trace_ray(r, ctx);
-          accum                = accum + c;
+    // Función para procesar un bloque de píxeles
+    void process_pixel_block(tbb::blocked_range2d<int> const & range, RenderParams const & params,
+                             tbb::enumerable_thread_specific<std::mt19937> & thread_rng) {
+      auto & local_rng    = thread_rng.local();
+      auto const & camera = *params.camera;
+      auto const & cfg    = *params.cfg;
+      auto const & scene  = *params.scene;
+      auto & image        = *params.image;
+
+      for (int j = range.rows().begin(); j < range.rows().end(); ++j) {
+        for (int i = range.cols().begin(); i < range.cols().end(); ++i) {
+          color::Color accum{0.0, 0.0, 0.0};
+
+          for (int s = 0; s < params.spp; ++s) {
+            auto rs = camera.make_ray(static_cast<std::size_t>(i), static_cast<std::size_t>(j),
+                                      local_rng);
+
+            ray::Ray const r{
+              render::vector{rs.ox, rs.oy, rs.oz},
+              render::vector{rs.dx, rs.dy, rs.dz}
+            };
+
+            RayTracingContext const ctx{params.max_depth, &cfg, &scene, r.direction};
+            color::Color const c = trace_ray(r, ctx);
+            accum                = accum + c;
+          }
+
+          double const inv_spp = 1.0 / static_cast<double>(params.spp);
+          RGBColor const out_color{accum.r * inv_spp, accum.g * inv_spp, accum.b * inv_spp};
+
+          image.setPixel(j, i, out_color, cfg.gamma);
         }
-
-        double const inv_spp = 1.0 / static_cast<double>(spp);
-        RGBColor const out_color{accum.r * inv_spp, accum.g * inv_spp, accum.b * inv_spp};
-        image.setPixel(j, i, out_color, cfg.gamma);
       }
     }
+
+  }  // namespace
+
+  // Función principal render_scene
+  void render_scene(ConfigParams const & cfg, SceneOutput const & scene, CameraSOA & camera,
+                    SOAImage & image) {
+    RenderParams params;
+    params.w         = image.width();
+    params.h         = image.height();
+    params.spp       = std::max(1, cfg.samples_per_pixel);
+    params.max_depth = std::max(1, cfg.max_depth);
+    params.cfg       = &cfg;
+    params.scene     = &scene;
+    params.camera    = &camera;
+    params.image     = &image;
+
+    camera.begin_frame(static_cast<std::size_t>(params.w), static_cast<std::size_t>(params.h));
+
+    std::size_t const num_threads_hint = std::thread::hardware_concurrency();
+    std::size_t const num_threads      = (num_threads_hint == 0) ? 4 : num_threads_hint;
+
+    std::vector<std::uint64_t> thread_seeds(num_threads);
+    std::mt19937_64 seed_gen(static_cast<std::uint64_t>(cfg.ray_rng_seed));
+    std::ranges::generate(thread_seeds, seed_gen);
+
+    tbb::enumerable_thread_specific<std::mt19937> thread_rng([&thread_seeds]() {
+      static std::atomic<std::size_t> counter{0};
+      auto thread_id           = counter.fetch_add(1, std::memory_order_relaxed);
+      std::uint64_t seed_value = thread_seeds[thread_id % thread_seeds.size()];
+      return std::mt19937(static_cast<std::mt19937::result_type>(seed_value));
+    });
+
+    tbb::parallel_for(
+        tbb::blocked_range2d<int>(0, params.h, 0, params.w),
+        [&](tbb::blocked_range2d<int> const & range) {
+          process_pixel_block(range, params, thread_rng);
+        },
+        tbb::auto_partitioner());
   }
 
 }  // namespace soa

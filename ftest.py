@@ -10,8 +10,7 @@ COMPARE_SCRIPT = os.path.join(ROOT_DIR, 'compare_images.py')
 TEMP_OUTPUT_DIR = os.path.join(ROOT_DIR, 'test_output')
 
 EXECUTABLES = {
-    'aos': os.path.join(ROOT_DIR, 'out', 'build', 'default', 'aos', 'Release', 'render-aos'),
-    'soa': os.path.join(ROOT_DIR, 'out', 'build', 'default', 'soa', 'Release', 'render-soa')
+    'par': os.path.join(ROOT_DIR, 'out', 'build', 'default', 'par', 'Release', 'render-par')
 }
 
 # --- CASOS DE PRUEBA FUNCIONALES (Pasan si Exit Code == 0) ---

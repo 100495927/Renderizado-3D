@@ -1,5 +1,5 @@
-add_executable(render-soa)
-target_sources(render-soa 
+add_executable(render-par)
+target_sources(render-par 
     PRIVATE 
         src/main.cpp
         src/soa_image.cpp
@@ -8,6 +8,6 @@ target_sources(render-soa
         src/soa_ray.cpp
         src/render_soa.cpp
 )
-target_include_directories(render-soa PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(render-par PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-target_link_libraries(render-soa PRIVATE Microsoft.GSL::GSL common)
+target_link_libraries(render-par PRIVATE Microsoft.GSL::GSL common)
