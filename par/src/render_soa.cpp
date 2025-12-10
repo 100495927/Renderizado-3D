@@ -46,7 +46,7 @@ namespace soa {
 
     void initialize_material_thread_local_rngs(std::uint64_t base_seed) {
       // Determinar el número de hilos
-      size_t num_threads = tbb::this_task_arena::max_concurrency();
+      auto num_threads = static_cast<size_t>(tbb::this_task_arena::max_concurrency());
       if (num_threads == 0) {
         num_threads = std::thread::hardware_concurrency();
       }
@@ -70,7 +70,7 @@ namespace soa {
 
     void initialize_ray_thread_local_rngs(std::uint64_t base_seed) {
       // Determinar el número de hilos
-      size_t num_threads = tbb::this_task_arena::max_concurrency();
+      auto num_threads = static_cast<size_t>(tbb::this_task_arena::max_concurrency());
       if (num_threads == 0) {
         num_threads = std::thread::hardware_concurrency();
       }
@@ -463,8 +463,8 @@ namespace soa {
   void render_scene(ConfigParams const & cfg, SceneOutput const & scene, CameraSOA & camera,
                     SOAImage & image) {
     // Inicializar generadores thread-local para materiales
-    initialize_material_thread_local_rngs(cfg.ray_rng_seed);
-    initialize_ray_thread_local_rngs(cfg.ray_rng_seed);
+    initialize_material_thread_local_rngs(static_cast<std::uint64_t>(cfg.ray_rng_seed));
+    initialize_ray_thread_local_rngs(static_cast<std::uint64_t>(cfg.ray_rng_seed));
 
     RenderParams params;
     params.w         = image.width();
