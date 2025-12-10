@@ -20,6 +20,7 @@ TEST_CASES = [
     (2, 'scene2.txt', 'config2.cfg', 's2.ppm'),
     (3, 'scene3.txt', 'config3.cfg', 's3.ppm'),
     (4, 'scene4.txt', 'config4.cfg', 's4.ppm'),
+    (5, 'scene5.txt', 'config5.cfg', 's5-par.ppm'),
 ]
 
 # --- CASOS DE PRUEBA DE ERROR (Pasan si Exit Code != 0) ---
