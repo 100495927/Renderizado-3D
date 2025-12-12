@@ -462,8 +462,12 @@ namespace soa {
   // Función principal render_scene
   void render_scene(ConfigParams const & cfg, SceneOutput const & scene, CameraSOA & camera,
                     SOAImage & image) {
+    std::cout << "[DEBUG] ray_rng_seed = " << cfg.ray_rng_seed << std::flush << "\n";
+    std::cout << "[DEBUG] material_rng_seed = " << cfg.material_rng_seed << std::flush << "\n";
+    std::cout << "[DEBUG] max_depth = " << cfg.max_depth << std::flush << "\n";
+    std::cout << "[DEBUG] samples_per_pixel = " << cfg.samples_per_pixel << std::flush << "\n";
     // Inicializar generadores thread-local para materiales
-    initialize_material_thread_local_rngs(static_cast<std::uint64_t>(cfg.ray_rng_seed));
+    initialize_material_thread_local_rngs(static_cast<std::uint64_t>(cfg.material_rng_seed));
     initialize_ray_thread_local_rngs(static_cast<std::uint64_t>(cfg.ray_rng_seed));
 
     RenderParams params;
