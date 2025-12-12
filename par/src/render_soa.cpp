@@ -351,29 +351,39 @@ namespace soa {
 
     color::Color process_matte(HitInfo const & hit, RayTracingContext const & ctx) {
       double const EPSILON = 1e-4;
-
-      // Usar thread_local para evitar carrera de datos
-      auto & local_rng = get_material_rng_per_thread().local();
+      auto & local_rng     = get_material_rng_per_thread().local();
       std::uniform_real_distribution<> dis(0.0, 1.0);
-
-      double const r1 = dis(local_rng);
-      double const r2 = dis(local_rng);
-      // Generar ángulos
+      double const r1    = dis(local_rng);
+      double const r2    = dis(local_rng);
       double const theta = std::acos(std::sqrt(r1));
       double const phi   = 2.0 * M_PI * r2;
+      render::vector tangent;
+      // Encontrar un vector no paralelo a la normal
+      if (std::abs(hit.normal.get_x()) > 0.9) {
+        tangent = render::vector{0, 1, 0};
+      } else {
+        tangent = render::vector{1, 0, 0};
+      }
+      tangent = tangent - hit.normal * render::dot(hit.normal, tangent);
+      tangent = tangent / tangent.magnitude();  // ¡IMPORTANTE! Normalizar
 
-      // Convertir a coordenadas usando la normal como base
-      render::vector tangent =
-          std::abs(hit.normal.get_x()) < 0.9 ? render::vector{1, 0, 0} : render::vector{0, 1, 0};
       render::vector const bitangent = render::cross(hit.normal, tangent);
-      tangent                        = render::cross(bitangent, hit.normal);
+      // Construir dirección difusa en coordenadas locales
+      double const sin_theta = std::sin(theta);
+      render::vector const local_dir{
+        sin_theta * std::cos(phi), sin_theta * std::sin(phi),
+        std::cos(theta)  // Componente Z es cos(theta) en coordenadas esféricas
+      };
+      // Transformar a coordenadas mundiales
+      render::vector const reflected_dir = hit.normal * local_dir.get_z() +
+                                           tangent * local_dir.get_x() +
+                                           bitangent * local_dir.get_y();
 
-      render::vector const reflected_dir = hit.normal * std::cos(theta) +
-                                           tangent * std::sin(theta) * std::cos(phi) +
-                                           bitangent * std::sin(theta) * std::sin(phi);
+      // Asegurar que la dirección está normalizada (por precisión numérica)
+      render::vector const normalized_dir = reflected_dir / reflected_dir.magnitude();
 
-      ray::Ray const bounce_ray{hit.point + hit.normal * EPSILON, reflected_dir};
-      RayTracingContext const new_ctx{ctx.depth - 1, ctx.cfg, ctx.scene, reflected_dir};
+      ray::Ray const bounce_ray{hit.point + hit.normal * EPSILON, normalized_dir};
+      RayTracingContext const new_ctx{ctx.depth - 1, ctx.cfg, ctx.scene, normalized_dir};
       color::Color const reflected = trace_ray(bounce_ray, new_ctx);
 
       return apply_material_color(reflected, hit.material);
