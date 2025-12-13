@@ -119,6 +119,7 @@ namespace soa {
       ConfigParams const * cfg{};
       SceneOutput const * scene{};
       render::vector ray_direction;
+      int internal_reflections{0};
     };
 
     // ==================== BÚSQUEDA DE MATERIAL ====================
@@ -292,7 +293,7 @@ namespace soa {
 
     color::Color trace_ray(ray::Ray const & r, RayTracingContext const & ctx) {
       if (ctx.depth <= 0) {
-        return color::Color{0, 0, 0};
+        return background_ray(r, *ctx.cfg);
       }
 
       HitInfo hit = closest_intersection(r, *ctx.scene);
@@ -343,7 +344,8 @@ namespace soa {
       }
 
       ray::Ray const bounce_ray{hit.point + hit.normal * EPSILON, reflected};
-      RayTracingContext const new_ctx{ctx.depth - 1, ctx.cfg, ctx.scene, reflected};
+      RayTracingContext const new_ctx{ctx.depth - 1, ctx.cfg, ctx.scene, reflected,
+                                      ctx.internal_reflections};
       color::Color const reflected_color = trace_ray(bounce_ray, new_ctx);
 
       return apply_material_color(reflected_color, hit.material);
@@ -351,39 +353,30 @@ namespace soa {
 
     color::Color process_matte(HitInfo const & hit, RayTracingContext const & ctx) {
       double const EPSILON = 1e-4;
-      auto & local_rng     = get_material_rng_per_thread().local();
+
+      // Usar thread_local para evitar carrera de datos
+      auto & local_rng = get_material_rng_per_thread().local();
       std::uniform_real_distribution<> dis(0.0, 1.0);
-      double const r1    = dis(local_rng);
-      double const r2    = dis(local_rng);
+
+      double const r1 = dis(local_rng);
+      double const r2 = dis(local_rng);
+      // Generar ángulos
       double const theta = std::acos(std::sqrt(r1));
       double const phi   = 2.0 * M_PI * r2;
-      render::vector tangent;
-      // Encontrar un vector no paralelo a la normal
-      if (std::abs(hit.normal.get_x()) > 0.9) {
-        tangent = render::vector{0, 1, 0};
-      } else {
-        tangent = render::vector{1, 0, 0};
-      }
-      tangent = tangent - hit.normal * render::dot(hit.normal, tangent);
-      tangent = tangent / tangent.magnitude();  // ¡IMPORTANTE! Normalizar
 
+      // Convertir a coordenadas usando la normal como base
+      render::vector tangent =
+          std::abs(hit.normal.get_x()) < 0.9 ? render::vector{1, 0, 0} : render::vector{0, 1, 0};
       render::vector const bitangent = render::cross(hit.normal, tangent);
-      // Construir dirección difusa en coordenadas locales
-      double const sin_theta = std::sin(theta);
-      render::vector const local_dir{
-        sin_theta * std::cos(phi), sin_theta * std::sin(phi),
-        std::cos(theta)  // Componente Z es cos(theta) en coordenadas esféricas
-      };
-      // Transformar a coordenadas mundiales
-      render::vector const reflected_dir = hit.normal * local_dir.get_z() +
-                                           tangent * local_dir.get_x() +
-                                           bitangent * local_dir.get_y();
+      tangent                        = render::cross(bitangent, hit.normal);
 
-      // Asegurar que la dirección está normalizada (por precisión numérica)
-      render::vector const normalized_dir = reflected_dir / reflected_dir.magnitude();
+      render::vector const reflected_dir = hit.normal * std::cos(theta) +
+                                           tangent * std::sin(theta) * std::cos(phi) +
+                                           bitangent * std::sin(theta) * std::sin(phi);
 
-      ray::Ray const bounce_ray{hit.point + hit.normal * EPSILON, normalized_dir};
-      RayTracingContext const new_ctx{ctx.depth - 1, ctx.cfg, ctx.scene, normalized_dir};
+      ray::Ray const bounce_ray{hit.point + hit.normal * EPSILON, reflected_dir};
+      RayTracingContext const new_ctx{ctx.depth - 1, ctx.cfg, ctx.scene, reflected_dir,
+                                      ctx.internal_reflections};
       color::Color const reflected = trace_ray(bounce_ray, new_ctx);
 
       return apply_material_color(reflected, hit.material);
@@ -391,28 +384,37 @@ namespace soa {
 
     color::Color process_refractive(ray::Ray const & r, HitInfo const & hit,
                                     RayTracingContext const & ctx) {
-      double const n1 = 1.0;                      // Aire
-      double const n2 = hit.material.refraction;  // Índice del material
-
+      constexpr double EPSILON        = 1e-4;
+      constexpr int MAX_INTERNAL_REFL = 4;
+      if (ctx.internal_reflections >= MAX_INTERNAL_REFL) {
+        return background_ray(r, *ctx.cfg);
+      }
+      double const n1         = 1.0;
+      double const n2         = hit.material.refraction;
       double const dot_in     = render::dot(hit.normal, -r.direction);
-      double const sin_theta1 = std::sqrt(1.0 - dot_in * dot_in);
+      double const sin_theta1 = std::sqrt(std::max(0.0, 1.0 - dot_in * dot_in));
       double const sin_theta2 = (n1 / n2) * sin_theta1;
-
       if (sin_theta2 > 1.0) {
         double const dot               = render::dot(r.direction, hit.normal);
         render::vector const reflected = r.direction - hit.normal * (2.0 * dot);
-        ray::Ray const bounce_ray{hit.point, reflected};
-        RayTracingContext const new_ctx{ctx.depth - 1, ctx.cfg, ctx.scene, reflected};
+
+        RayTracingContext const new_ctx{ctx.depth - 1, ctx.cfg, ctx.scene, reflected,
+                                        ctx.internal_reflections + 1};
+
+        ray::Ray const bounce_ray{hit.point + hit.normal * EPSILON, reflected};
+
         return trace_ray(bounce_ray, new_ctx);
       }
+      double const cos_theta2 = std::sqrt(std::max(0.0, 1.0 - sin_theta2 * sin_theta2));
 
-      double const cos_theta2 = std::sqrt(1.0 - sin_theta2 * sin_theta2);
       render::vector const refracted =
           (r.direction * (n1 / n2)) + hit.normal * ((n1 / n2) * dot_in - cos_theta2);
 
-      ray::Ray const bounce_ray{hit.point, refracted};
-      RayTracingContext const new_ctx{ctx.depth - 1, ctx.cfg, ctx.scene, refracted};
-      return trace_ray(bounce_ray, new_ctx);
+      RayTracingContext const refr_ctx{ctx.depth - 1, ctx.cfg, ctx.scene, refracted, 0};
+
+      ray::Ray const refracted_ray{hit.point + hit.normal * EPSILON, refracted};
+
+      return trace_ray(refracted_ray, refr_ctx);
     }
 
   }  // namespace
@@ -454,7 +456,7 @@ namespace soa {
               render::vector{rs.dx, rs.dy, rs.dz}
             };
 
-            RayTracingContext const ctx{params.max_depth, &cfg, &scene, r.direction};
+            RayTracingContext const ctx{params.max_depth, &cfg, &scene, r.direction, 0};
             color::Color const c = trace_ray(r, ctx);
             accum                = accum + c;
           }
@@ -472,10 +474,6 @@ namespace soa {
   // Función principal render_scene
   void render_scene(ConfigParams const & cfg, SceneOutput const & scene, CameraSOA & camera,
                     SOAImage & image) {
-    std::cout << "[DEBUG] ray_rng_seed = " << cfg.ray_rng_seed << std::flush << "\n";
-    std::cout << "[DEBUG] material_rng_seed = " << cfg.material_rng_seed << std::flush << "\n";
-    std::cout << "[DEBUG] max_depth = " << cfg.max_depth << std::flush << "\n";
-    std::cout << "[DEBUG] samples_per_pixel = " << cfg.samples_per_pixel << std::flush << "\n";
     // Inicializar generadores thread-local para materiales
     initialize_material_thread_local_rngs(static_cast<std::uint64_t>(cfg.material_rng_seed));
     initialize_ray_thread_local_rngs(static_cast<std::uint64_t>(cfg.ray_rng_seed));
