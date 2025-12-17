@@ -75,19 +75,18 @@ int main(int argc, char ** argv) {
     return 3;
   }
   soa::CameraSOA camera(cfg);
-  SOAImage image(cfg.image_width, cfg.get_image_height());
-  // 4) Render
+  int const width  = cfg.image_width;
+  int const height = cfg.get_image_height();
+  SOAImage image(width, height);
+  // 4) Renderizar escena
   soa::RenderOptions ro;
   ro.partitioner = args.partitioner;
   ro.grain_rows  = args.grain_rows;
   ro.grain_cols  = args.grain_cols;
-  std::cout << "[MAIN] RenderOptions:\n"
-            << "  partitioner = " << ro.partitioner << '\n'
-            << "  grain_rows  = " << ro.grain_rows << '\n'
-            << "  grain_cols  = " << ro.grain_cols << '\n';
   soa::set_render_options(ro);
   soa::render_scene(cfg, scene_out, camera, image);
   // 5) Guardar imagen
   image.write_ppm(args.output_file);
+  std::cout << "Imagen escrita en: " << args.output_file << "(" << width << "x" << height << ")\n";
   return 0;
 }

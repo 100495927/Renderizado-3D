@@ -3,7 +3,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <iostream>
 #include <optional>
 #include <random>
 #include <string>
@@ -513,10 +512,6 @@ namespace soa {
     grain_rows = std::max(1, std::min(grain_rows, params.h));
     grain_cols = std::max(1, std::min(grain_cols, params.w));
 
-    std::cout << "[RENDER] Using:\n"
-              << "  partitioner = " << partitioner << '\n'
-              << "  grain_rows  = " << grain_rows << '\n'
-              << "  grain_cols  = " << grain_cols << '\n';
     tbb::blocked_range2d<int> const range(
         0, params.h, static_cast<tbb::blocked_range2d<int>::row_range_type::size_type>(grain_rows),
         0, params.w, static_cast<tbb::blocked_range2d<int>::col_range_type::size_type>(grain_cols));
