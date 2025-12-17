@@ -2,9 +2,11 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <oneapi/tbb/blocked_range2d.h>
@@ -56,7 +58,7 @@ namespace soa {
 
       // Generar semillas únicas para cada hilo
       std::vector<std::uint64_t> seeds_material(num_threads);
-      std::mt19937_64 seed_gen_material{base_seed + 12'345ULL};
+      std::mt19937_64 const seed_gen_material{base_seed + 12'345ULL};
       std::ranges::generate(seeds_material, seed_gen_material);
 
       // Indicar generadores locales a cada hilo
@@ -80,7 +82,7 @@ namespace soa {
 
       // Generar semillas únicas para cada hilo
       std::vector<std::uint64_t> seeds_ray(num_threads);
-      std::mt19937_64 seed_gen_ray{base_seed};
+      std::mt19937_64 const seed_gen_ray{base_seed};
       std::ranges::generate(seeds_ray, seed_gen_ray);
 
       // Indicar generadores locales a cada hilo
@@ -494,13 +496,13 @@ namespace soa {
     std::size_t const num_threads      = (num_threads_hint == 0) ? 4 : num_threads_hint;
 
     std::vector<std::uint64_t> thread_seeds(num_threads);
-    std::mt19937_64 seed_gen(static_cast<std::uint64_t>(cfg.ray_rng_seed));
+    std::mt19937_64 const seed_gen(static_cast<std::uint64_t>(cfg.ray_rng_seed));
     std::ranges::generate(thread_seeds, seed_gen);
 
-    tbb::enumerable_thread_specific<std::mt19937_64> thread_rng([&thread_seeds]() {
+    tbb::enumerable_thread_specific<std::mt19937_64> const thread_rng([&thread_seeds]() {
       static std::atomic<std::size_t> counter{0};
-      auto thread_id           = counter.fetch_add(1, std::memory_order_relaxed);
-      std::uint64_t seed_value = thread_seeds[thread_id % thread_seeds.size()];
+      auto thread_id                 = counter.fetch_add(1, std::memory_order_relaxed);
+      std::uint64_t const seed_value = thread_seeds[thread_id % thread_seeds.size()];
       return std::mt19937_64(static_cast<std::mt19937_64::result_type>(seed_value));
     });
 
