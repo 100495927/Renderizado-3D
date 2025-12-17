@@ -1,12 +1,24 @@
 #ifndef SOA_RENDER_SOA_HPP
 #define SOA_RENDER_SOA_HPP
 
+#pragma once
+#include <string>
+
 #include "../../common/include/config.hpp"
 #include "../../common/include/scene_parser.hpp"
 #include "soa_camera.hpp"
 #include "soa_image.hpp"
 
 namespace soa {
+
+  struct RenderOptions {
+    std::string partitioner = "auto";
+    int grain_rows          = 1;
+    int grain_cols          = 1;
+  };
+
+  void set_render_options(RenderOptions const & opts);
+  RenderOptions const & get_render_options();
 
   // Renderiza la escena en la imagen usando la cámara en formato SOA.
   // Contrato mínimo:

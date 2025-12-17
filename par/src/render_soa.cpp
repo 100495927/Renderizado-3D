@@ -2,9 +2,12 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <iostream>
 #include <optional>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <oneapi/tbb/blocked_range2d.h>
@@ -56,7 +59,7 @@ namespace soa {
 
       // Generar semillas únicas para cada hilo
       std::vector<std::uint64_t> seeds_material(num_threads);
-      std::mt19937_64 seed_gen_material{base_seed + 12'345ULL};
+      std::mt19937_64 const seed_gen_material{base_seed + 12'345ULL};
       std::ranges::generate(seeds_material, seed_gen_material);
 
       // Indicar generadores locales a cada hilo
@@ -80,7 +83,7 @@ namespace soa {
 
       // Generar semillas únicas para cada hilo
       std::vector<std::uint64_t> seeds_ray(num_threads);
-      std::mt19937_64 seed_gen_ray{base_seed};
+      std::mt19937_64 const seed_gen_ray{base_seed};
       std::ranges::generate(seeds_ray, seed_gen_ray);
 
       // Indicar generadores locales a cada hilo
@@ -417,6 +420,11 @@ namespace soa {
       return trace_ray(refracted_ray, refr_ctx);
     }
 
+    RenderOptions & get_global_render_options_internal() {
+      static RenderOptions g_render_options{};
+      return g_render_options;
+    }
+
   }  // namespace
 
   // ============ VERSIÓN PARALELIZADA CON TBB ==============
@@ -431,6 +439,14 @@ namespace soa {
     CameraSOA * camera{nullptr};
     SOAImage * image{nullptr};
   };
+
+  void set_render_options(RenderOptions const & opts) {
+    get_global_render_options_internal() = opts;
+  }
+
+  RenderOptions const & get_render_options() {
+    return get_global_render_options_internal();
+  }
 
   namespace {  // Namespace anónimo para funciones internas
 
@@ -474,6 +490,10 @@ namespace soa {
   // Función principal render_scene
   void render_scene(ConfigParams const & cfg, SceneOutput const & scene, CameraSOA & camera,
                     SOAImage & image) {
+    auto const & opts               = get_render_options();
+    std::string const & partitioner = opts.partitioner;
+    int grain_rows                  = opts.grain_rows;
+    int grain_cols                  = opts.grain_cols;
     // Inicializar generadores thread-local para materiales
     initialize_material_thread_local_rngs(static_cast<std::uint64_t>(cfg.material_rng_seed));
     initialize_ray_thread_local_rngs(static_cast<std::uint64_t>(cfg.ray_rng_seed));
@@ -490,24 +510,25 @@ namespace soa {
 
     camera.begin_frame(static_cast<std::size_t>(params.w), static_cast<std::size_t>(params.h));
 
-    std::size_t const num_threads_hint = std::thread::hardware_concurrency();
-    std::size_t const num_threads      = (num_threads_hint == 0) ? 4 : num_threads_hint;
+    grain_rows = std::max(1, std::min(grain_rows, params.h));
+    grain_cols = std::max(1, std::min(grain_cols, params.w));
 
-    std::vector<std::uint64_t> thread_seeds(num_threads);
-    std::mt19937_64 seed_gen(static_cast<std::uint64_t>(cfg.ray_rng_seed));
-    std::ranges::generate(thread_seeds, seed_gen);
+    std::cout << "[RENDER] Using:\n"
+              << "  partitioner = " << partitioner << '\n'
+              << "  grain_rows  = " << grain_rows << '\n'
+              << "  grain_cols  = " << grain_cols << '\n';
+    tbb::blocked_range2d<int> const range(
+        0, params.h, static_cast<tbb::blocked_range2d<int>::row_range_type::size_type>(grain_rows),
+        0, params.w, static_cast<tbb::blocked_range2d<int>::col_range_type::size_type>(grain_cols));
 
-    tbb::enumerable_thread_specific<std::mt19937_64> thread_rng([&thread_seeds]() {
-      static std::atomic<std::size_t> counter{0};
-      auto thread_id           = counter.fetch_add(1, std::memory_order_relaxed);
-      std::uint64_t seed_value = thread_seeds[thread_id % thread_seeds.size()];
-      return std::mt19937_64(static_cast<std::mt19937_64::result_type>(seed_value));
-    });
-
-    tbb::parallel_for(
-        tbb::blocked_range2d<int>(0, params.h, 0, params.w),
-        [&](tbb::blocked_range2d<int> const & range) { process_pixel_block(range, params); },
-        tbb::auto_partitioner());
+    auto body = [&](tbb::blocked_range2d<int> const & r) { process_pixel_block(r, params); };
+    if (partitioner == "simple") {
+      tbb::parallel_for(range, body, tbb::simple_partitioner{});
+    } else if (partitioner == "static") {
+      tbb::parallel_for(range, body, tbb::static_partitioner{});
+    } else {
+      tbb::parallel_for(range, body, tbb::auto_partitioner{});
+    }
   }
 
 }  // namespace soa
