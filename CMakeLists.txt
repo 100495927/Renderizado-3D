@@ -46,4 +46,5 @@ if(ENABLE_CLANG_TIDY)
 endif()
 
 add_subdirectory(common)
+add_subdirectory(utcommon)
 add_subdirectory(par)
