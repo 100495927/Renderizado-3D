@@ -24,10 +24,10 @@ namespace {
     std::string config_file;
     std::string scene_file;
     std::string output_file;
-    int threads             = 1;
-    std::string partitioner = "auto";
-    int grain_rows          = 1;
-    int grain_cols          = 1;
+    int threads             = 256;
+    std::string partitioner = "simple";
+    int grain_rows          = 8;
+    int grain_cols          = 8;
   };
 
   bool parse_args(std::span<char *> args, Args & out) {

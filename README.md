@@ -11,12 +11,12 @@ cmake --build out/build/default --target render-par
 --Ejemplo de ejecución del programa--
 ./out/build/default/par/Release/render-par archivos_ejemplo/config1.cfg archivos_ejemplo/scene1.txt output_soa_ejemplo.ppm
 
---Script para comparar imágenes (compare_images.py)--
-Tenemos un script que compara las imágenes generadas con las originales, para ejecutarlo: python3 <ruta_output.ppm> <ruta_referencia.ppm> <ruta_diff.ppm>
-
---Script ftest.py.py--
-
-Ejecuta automáticamente una batería de tests para las implementaciones AOS y SOA. Los tests incluyen tests funcionales y tests de error. Para ejecutarlo: python3 ftest.py
+Si no se añaden argumentos extra, el programa ejecuta la versión óptima
+--Argumentos extra--
+.-arg4: número de hilos
+-.arg5: estrategia de partición (simple, auto ó static)
+-.arg6: grano de filas
+-.arg7: grano de columnas
 
 --Script utest.py--
 
