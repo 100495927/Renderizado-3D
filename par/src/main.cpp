@@ -31,20 +31,34 @@ namespace {
   };
 
   bool parse_args(std::span<char *> args, Args & out) {
-    if (args.size() == 8) {
-      out.config_file = args[1];
-      out.scene_file  = args[2];
-      out.output_file = args[3];
-      out.threads     = std::stoi(args[4]);
-      out.partitioner = args[5];
-      out.grain_rows  = std::stoi(args[6]);
-      out.grain_cols  = std::stoi(args[7]);
+    // Si no hay argumentos suficientes, usar valores por defecto
+    if (args.size() < 4) {
+      // Fallback: archivos por defecto
+      out.config_file = "archivos_ejemplo/config5.cfg";
+      out.scene_file  = "archivos_ejemplo/scene5.txt";
+      out.output_file = "output_soa5.ppm";
       return true;
     }
-    // Fallback: try default sample files
-    out.config_file = "archivos_ejemplo/config4.cfg";
-    out.scene_file  = "archivos_ejemplo/scene4.txt";
-    out.output_file = "output_soa4.ppm";
+
+    // Primeros 3 argumentos obligatorios: archivos
+    out.config_file = args[1];
+    out.scene_file  = args[2];
+    out.output_file = args[3];
+
+    // Parámetros opcionales (pueden faltar)
+    if (args.size() >= 5) {
+      out.threads = std::stoi(args[4]);
+    }
+    if (args.size() >= 6) {
+      out.partitioner = args[5];
+    }
+    if (args.size() >= 7) {
+      out.grain_rows = std::stoi(args[6]);
+    }
+    if (args.size() >= 8) {
+      out.grain_cols = std::stoi(args[7]);
+    }
+    // Si hay más de 8 argumentos, ignoramos el resto
     return true;
   }
 
