@@ -102,7 +102,7 @@ python3 utcommon/utest-common.py
 
 ### 1) Render con varios objetos geométricos sobre un plano
 
-![Render con varios objetos geométricos sobre un plano](docs/images/resultado_varios_objetos_plano.png)
+![Render con varios objetos geométricos sobre un plano](docs/images/imagen.jpeg)
 
 ### 2) Objeto compuesto verde y azul sobre fondo claro
 
@@ -110,7 +110,7 @@ python3 utcommon/utest-common.py
 
 ### 3) Escena con numerosos objetos geométricos coloreados
 
-![Escena con numerosos objetos geométricos coloreados](docs/images/resultado_escena_objetos_coloreados.png)
+![Escena con numerosos objetos geométricos](docs/images/resultado_escena_objetos_coloreados.png)
 
 ## Notas
 
